@@ -1,4 +1,3 @@
-# Created by Miyin
 """Report local Bilibili prerequisites without logging in or accessing the network."""
 import importlib.util
 import json

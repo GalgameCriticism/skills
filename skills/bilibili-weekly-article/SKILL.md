@@ -22,6 +22,7 @@ description: 把周报期目录里的 docx 文字稿和图包素材排版成 B �
 3. **人工审核并定稿**（必做，不可跳过）：
    - 标题定稿：默认拟制「【Gal周报N期】+副标题」，人工改写后把 article.json 的  
      `title_status` 改为 `manual`；
+     标题中汉字与英文字母之间不留空格，以节省标题字数（如「登陆 Steam」改为「登陆Steam」）；保留英文词组内部的空格。此规则只用于标题，不改变正文的中英文间距。
    - 逐条核对配图：默认每条取图包前 2 张（首图在小标题后、次图在正文后），  
      可改 article.json 的 `selected` 索引数组，重跑步骤 2；
    - 补 `credits`：docx 不含署名段，用 `python3 scripts/fetch_staff.py <期号> --apply <期目录>`  

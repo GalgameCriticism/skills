@@ -1,4 +1,3 @@
-// Created by Miyin
 const fs = require('node:fs');
 const path = require('node:path');
 

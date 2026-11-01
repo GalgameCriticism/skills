@@ -1,4 +1,3 @@
-# Created by Miyin
 """Local input, account and receipt guards for Bilibili writes."""
 import hashlib
 import json

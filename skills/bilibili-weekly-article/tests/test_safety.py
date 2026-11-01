@@ -1,4 +1,3 @@
-# Created by Miyin
 import asyncio
 import copy
 import json

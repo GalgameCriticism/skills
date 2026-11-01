@@ -1,4 +1,3 @@
-// Created by Miyin
 // Each skill includes this module so it remains independently installable.
 const fs = require('node:fs');
 const os = require('node:os');
