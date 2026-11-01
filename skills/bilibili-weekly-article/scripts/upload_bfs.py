@@ -55,6 +55,11 @@ def api_session(cred) -> "requests.Session":
 
 def upload_one(sess, cred, path: Path, retries: int = 2) -> dict:
     """上传单张图 → {url, width, height, size}；重试后仍失败即中止（防止图片丢失）。"""
+    from PIL import Image
+
+    with Image.open(path) as image:
+        image.verify()
+        mime = Image.MIME[image.format]
     w, h, kb = image_size(path)
     last_err = ""
     for attempt in range(retries + 1):
@@ -64,10 +69,11 @@ def upload_one(sess, cred, path: Path, retries: int = 2) -> dict:
                 r = sess.post(
                     UPLOAD_URL,
                     params={"csrf": cred.bili_jct},
-                    files={"file_up": (path.name, f, "image/png")},
+                    files={"file_up": (path.name, f, mime)},
                     data={"biz": "new_dyn", "category": "daily"},
-                    timeout=120,
+                    timeout=120, allow_redirects=False,
                 )
+            r.raise_for_status()
             resp = r.json()
             d = resp.get("data") or {}
             url = d.get("image_url") or d.get("img_src") or d.get("url")
@@ -81,7 +87,7 @@ def upload_one(sess, cred, path: Path, retries: int = 2) -> dict:
                 }
             last_err = json.dumps(resp, ensure_ascii=False)[:200]
         except Exception as e:  # noqa: BLE001
-            last_err = f"{type(e).__name__}: {e}"
+            last_err = type(e).__name__  # Request URLs may contain csrf credentials.
         print(f"[upload] 第 {attempt + 1} 次失败: {last_err}", flush=True)
         if attempt == retries:
             break

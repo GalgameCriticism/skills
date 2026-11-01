@@ -1,0 +1,6 @@
+# Direct dependencies tested with Python 3.13; update deliberately after validation.
+Pillow==13.0.0
+requests==2.34.2
+qrcode==8.2
+bilibili-api-python==17.4.2
+httpx==0.28.1

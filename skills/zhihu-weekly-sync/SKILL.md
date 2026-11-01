@@ -15,7 +15,7 @@ description: 在用户要求把获授权的周报发布到知乎文章/专栏、
 
 ## 一个窗口贯穿全流程（禁止反复重启浏览器）
 
-`scripts/browser-session.cjs` 提供 `attach(profileDir, port)`：先尝试 `connectOverCDP` 连接已在运行的专用 Chrome，只有在探测不到调试端口时才以 `--no-sandbox --remote-debugging-port=<port>` 启动一次（detached），随后所有步骤复用同一窗口。
+`scripts/browser-session.cjs` 提供 `attach(profileDir, port)`：先尝试 `connectOverCDP` 连接已在运行的专用 Chrome，只有在授权启动、设置 `CHROME_ALLOW_LAUNCH=1` 且探测不到调试端口时才以 `--enable-automation --remote-debugging-address=127.0.0.1 --remote-debugging-port=<port>` 启动一次（detached），随后所有步骤复用同一窗口。
 
 - 知乎默认端口 `9444`（`ZHIHU_DEBUG_PORT` 可覆盖），微博默认 `9333`；两个平台各用一个 profile + 端口，互不干扰。
 - 每一步结束都**不关闭**浏览器：下一步重新 `attach` 即可，登录态与已填草稿都留在窗口里。
@@ -90,3 +90,5 @@ description: 在用户要求把获授权的周报发布到知乎文章/专栏、
 ## 去重与核验
 
 以来源平台、来源内容 ID、目标知乎账号组成去重键；先查仓库外回执和目标账号文章列表，再决定发布或回读。跨平台任务只消费已有 manifest，不重新抓取来源；一端已成功时，知乎失败只重跑知乎。
+
+安全配置以 [共享浏览器会话规则](../weekly-cross-platform-sync/references/browser-session.md) 为准；显式目标账号、专用 profile 核验和保留沙箱是写入前提。未知提交先回读，不重复提交。

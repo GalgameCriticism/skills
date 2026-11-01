@@ -20,7 +20,7 @@ description: 管理 B 站、微博、知乎和小黑盒之间的周报同步工�
 
 | 目标 | 默认适配器 | 重要边界 |
 | --- | --- | --- |
-| 微博头条文章 | 本仓库 `skills/weibo-weekly-sync/scripts/weibo-compose.cjs`（编排思路来自 [XinAloha/skills](https://github.com/XinAloha/skills/tree/main/content/post-to-weibo)） | 直排 v5 编辑器：标题/导语/正文/逐图粘贴；上游 `weibo-article.ts` 的 Chrome 启动器不带 `--no-sandbox`，在本机会以 `CDP connection closed` 失败，不要直接用它启动浏览器 |
+| 微博头条文章 | 本仓库 `skills/weibo-weekly-sync/scripts/weibo-run.cjs` | 直排编辑器；只连接经过 profile 核验且保留沙箱的专用 Chrome |
 | 知乎文章 | 本仓库 `skills/zhihu-weekly-sync/scripts/zhihu-compose.cjs` | 直排正文（DOCX 导入当前被直答知识库配额拦截）；图片按 `/v2-<32hex>` 判定完成，禁止重复上传重试 |
 
 两个平台的脚本共用同一套会话约定：`scripts/browser-session.cjs` 的 `attach()` 复用已在运行的专用 Chrome，一步结束不关窗口，下一步继续复用（详见 [浏览器会话规则](references/browser-session.md)）。
@@ -71,11 +71,14 @@ description: 管理 B 站、微博、知乎和小黑盒之间的周报同步工�
 
 ## 安装总览
 
-- 小黑盒：安装 [GalgameCriticism/XiaoheiheMcpServer](https://github.com/GalgameCriticism/XiaoheiheMcpServer) 并构建 `XiaoheiheMcpServer.Stdio`。
-- 微博来源读取：`uv tool install mcp-server-weibo`，配置 `uvx --from mcp-server-weibo mcp-server-weibo`；该项目不是微博写入器。
-- 微博发布：安装 [XinAloha/skills](https://github.com/XinAloha/skills) 中的 `content/post-to-weibo/scripts`，执行 `npm install`；已授权启动独立浏览器且 profile 未被占用时可运行 `npx -y bun weibo-article.ts <preview.md> --profile <private-profile>`。有可用会话时优先连接并复用现有草稿；此脚本只填充，发布及核验仍须执行。
-- 知乎发布：安装 [guoxiaoyi/liduma-article-publisher](https://github.com/guoxiaoyi/liduma-article-publisher) 与 `agent-browser`，用已有 manifest 生成临时 DOCX/封面目录；采用已经确认不会重置或切换 profile 的连接方式。已授权自动启动时可按共享会话规则启动独立浏览器，再连接导入，不能直接假设旧 CLI 支持安全连接。此前的 [yangming0506/zhihu-auto-publish](https://github.com/yangming0506/zhihu-auto-publish) 仅作为备用探索适配器，若它重定向登录页或只打印“完成”而没有公开 URL，判为未完成，不重置或切换用户浏览器。
+仅检查任务实际需要的适配器。优先使用本仓库的 Playwright 脚本；Python 采集脚本使用标准库。需要额外 MCP 或上游 CLI 时，先审查其源码、安装行为和依赖，再固定已审查的提交/包版本后安装；不得自动运行浮动版本的 `npx -y` 或照搬任意上游安装脚本。
+
+- 小黑盒：审核并固定 [GalgameCriticism/XiaoheiheMcpServer](https://github.com/GalgameCriticism/XiaoheiheMcpServer) 版本后构建。
+- 微博来源读取：按 [qinyuanpei/mcp-server-weibo](https://github.com/qinyuanpei/mcp-server-weibo) 的已审查固定版本配置；它不是写入器。
+- 微博/知乎写入：安装并固定经过审查的 Playwright 版本，使用本仓库脚本和专用 Chrome。新会话配置见 [浏览器会话规则](references/browser-session.md)。Chrome 保留沙箱；启动失败时报告，不关闭沙箱。
 
 旧的 [Victorzwx/zh_mcp_server](https://github.com/Victorzwx/zh_mcp_server) 保留为兼容/探索方案；它的 Cookie 文件和 Selenium 流程不自动复用上述 Playwright profile。
 
 各平台具体工具名、选择器和能力限制以独立 skill 及上游版本为准；总工作流只维护路由和共同验收规则。
+
+安全配置以 [共享浏览器会话规则](../weekly-cross-platform-sync/references/browser-session.md) 为准；显式目标账号、专用 profile 核验和保留沙箱是写入前提。未知提交先回读，不重复提交。

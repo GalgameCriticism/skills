@@ -2,6 +2,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const { attach } = require('./browser-session.cjs');
+const { checkSubmission, claimSubmission, zhihuAccount } = require('./safety.cjs');
 
 const args = { publish: false };
 for (let i = 2; i < process.argv.length; i++) {
@@ -11,6 +12,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 const manifest = JSON.parse(fs.readFileSync(args.manifest, 'utf8'));
 const receiptFile = path.join(path.dirname(args.manifest), 'zhihu-receipt.json');
+checkSubmission(receiptFile);
 const blocks = manifest.blocks.slice();
 if (blocks.length && blocks[0].type !== 'image' && blocks[0].nodes.map(n => n.text).join('').trim() === manifest.source_title.trim()) blocks.shift();
 const expectedText = blocks.filter(b => b.type !== 'image').map(b => b.nodes.map(n => n.text).join('')).join('').replace(/\s+/g, '');
@@ -28,7 +30,7 @@ const stats = page => page.evaluate(() => {
 (async () => {
   const { ctx, reused, port } = await attach(process.env.ZHIHU_PROFILE, process.env.ZHIHU_DEBUG_PORT || 9444);
   log({ step: 'browser', reused, port });
-  const page = ctx.pages()[0] || await ctx.newPage();
+  const page = await ctx.newPage();
   try {
     await page.goto('https://www.zhihu.com/creator/manage/creation/draft?type=article', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(6000);
@@ -54,6 +56,8 @@ const stats = page => page.evaluate(() => {
       if (s.images === expectedImages && s.v2 === expectedImages && textOk) {
         log({ step: 'candidate_ok', i });
         if (!args.publish) return;
+        await zhihuAccount(work);
+        claimSubmission(receiptFile);
         const respPromise = work.waitForResponse(r => /\/api\/v4\/content\/publish/.test(r.url()) && r.request().method() === 'POST', { timeout: 120000 });
         await work.getByRole('button', { name: '发布', exact: true }).click();
         await work.waitForTimeout(3000);

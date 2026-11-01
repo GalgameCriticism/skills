@@ -1,7 +1,8 @@
-\---  
+---
+
 name: bilibili-weekly-article  
 description: 把周报期目录里的 docx 文字稿和图包素材排版成 B 站图文（Opus 专栏）并投稿。用户要求制作/排版/发布 B 站 Gal 周报图文、把文字稿和图包做成专栏文章时使用；由用户人工审核后点击发送。  
-\---
+---
 
 # B 站周报图文排版与投稿
 
@@ -21,6 +22,7 @@ description: 把周报期目录里的 docx 文字稿和图包素材排版成 B �
 3. **人工审核并定稿**（必做，不可跳过）：
    - 标题定稿：默认拟制「【Gal周报N期】+副标题」，人工改写后把 article.json 的  
      `title_status` 改为 `manual`；
+     标题中汉字与英文字母之间不留空格，以节省标题字数（如「登陆 Steam」改为「登陆Steam」）；保留英文词组内部的空格。此规则只用于标题，不改变正文的中英文间距。
    - 逐条核对配图：默认每条取图包前 2 张（首图在小标题后、次图在正文后），  
      可改 article.json 的 `selected` 索引数组，重跑步骤 2；
    - 补 `credits`：docx 不含署名段，用 `python3 scripts/fetch_staff.py <期号> --apply <期目录>`  
@@ -28,10 +30,10 @@ description: 把周报期目录里的 docx 文字稿和图包素材排版成 B �
      [references/feishu-staff-table.md](references/feishu-staff-table.md)），拉取后人工核对；
    - 核对章节顺序、正文无外链、无「（简）」前缀残留。
 4. **上线**（二选一）：
-   - **草稿模式（推荐）**：`python3 scripts/save_draft.py <期目录>`（上传配图 +  
+   - **草稿模式（推荐）**：`python3 scripts/save_draft.py <期目录> --account-id <目标UID>`（上传配图 +
      存草稿），然后人工到 创作中心→专栏投稿→草稿箱 打开草稿审核，点「发布」；
-   - 直接发布：`python3 scripts/build_opus.py <期目录>`（上传配图到 B 站 BFS，  
-     产出 opus_payload.json）→ `python3 scripts/publish_opus.py <期目录> --yes`  
+   - 直接发布：`python3 scripts/build_opus.py <期目录> --account-id <目标UID>`（上传配图到 B 站 BFS，
+     产出 opus_payload.json）→ `python3 scripts/publish_opus.py <期目录> --account-id <目标UID> --yes`
      （发布 + 回读验证，输出公开链接）。
 
 任何一步的解析警告（`article.json` 的 `warnings`）必须清零或人工确认忽略后才能上线。
@@ -102,13 +104,13 @@ requests 直传：120s 超时+重试，库版 aiohttp 不支持 timeout 大图�
 文集：发布时加 `--collection 471774` 为实验性参数；未生效时按回执提示到  
 创作中心→内容管理→专栏管理→选择文集 手动收录。
 
-草稿模式：`python3 scripts/save_draft.py <期目录>` 走创作中心新编辑器  
+草稿模式：`python3 scripts/save_draft.py <期目录> --account-id <目标UID>` 走创作中心新编辑器
 （member.bilibili.com/york/read-editor，旧版 read/editor 已下线）自用的草稿端点  
 `x/dynamic/feed/article/draft/add`（arg.type=4、arg.opus.content.paragraphs 与发布  
 同构，文本节点为 `node_type:1`），上传配图后存草稿并回执 `_preview/draft_receipt.json`。  
 删除端点 `x/dynamic/feed/article/draft/delete`（body article_id）；`draft/list` 列表  
 接口有索引延迟不可靠，回读用 `x/article/creative/draft/view?aid=<id>`。  
-已有回执时默认停止（防覆盖人工改过的草稿），`--replace` 删旧建新。  
+已有回执或未知提交时停止，不自动删除、覆盖或重建草稿。先到创作中心核对结果；新版本不提供 `--replace`。
 草稿的文集（list_id）留 0，由人工在编辑器「选择文集」拾取。  
 264 期实证：42 图全上传、118 段落、article_id=382988，浏览器草稿箱验证版式与线上一致。
 
@@ -129,3 +131,15 @@ requests 直传：120s 超时+重试，库版 aiohttp 不支持 timeout 大图�
 - 不改写 docx 与图包原始文件；所有派生文件只进 `_preview/`。
 - 视频文件（`*视频_*.mp4`）不属于图文素材，忽略；周报视频投稿不在本技能范围。
 - 不保存 Cookie/凭证到团队仓库或对话；凭证只走 `~/.config/` 与环境变量。
+
+## 安全与 macOS 试用
+
+使用 Python 3.11+，在独立虚拟环境安装本目录 `requirements.txt`。不依赖 Chrome、COM 或 Windows，macOS 可执行解析、预览、构建和 API 发布。飞书署名另需 lark-cli 的目标表只读授权；也可人工填写真实署名，不要求为试用额外授权飞书。
+
+上传/存草稿/发布必须显式传 `--account-id <目标B站UID>`，脚本用 nav 接口核对真实账号；`--yes` 只省略命令行确认，不代表跳过用户审核。标题须为 `title_status=manual`、署名非空、warnings 清空后才能真实上传。素材只允许引用期目录内的可识别图片，拒绝目录穿越和指向目录外的符号链接。
+
+推荐先用 `build_opus.py <期目录> --dry-run`、`save_draft.py <期目录> --dry-run` 和 `render_preview.py` 做离线预演。它们不登录、不上传、不存线上草稿。`publish_opus.py --dry-run` 同样不访问网络，可检查 dry-run payload；占位图绝不能真实发布。真实 build 会上传图片，即使尚未发布。
+
+真实构建会把定稿、素材及账号信息绑定在 payload 的 `_local` 中；改稿、换图、换账号后必须重建。`_local` 不发送给 B 站。发布前独占创建回执；接口超时保留未知状态，先查创作中心，不盲目重试。取得 dyn_id 后立即保存，回读失败时下一次运行只回读原文章。回执及整个 `_preview` 目录应保留在本机，不提交到 Git。
+
+静态和离线测试不能替代账号的实际草稿验收。首次真实试用优先存草稿，人工核对账号、全文和配图后再在 B 站发布。

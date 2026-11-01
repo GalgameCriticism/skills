@@ -14,7 +14,7 @@ description: 使用微博读取适配器或用户提供的授权素材处理周�
 使用上游项目 [qinyuanpei/mcp-server-weibo](https://github.com/qinyuanpei/mcp-server-weibo)：
 
 ```bash
-uv tool install mcp-server-weibo
+uv tool install mcp-server-weibo==<已审查版本>
 ```
 
 stdio 配置示例：
@@ -46,7 +46,7 @@ stdio 配置示例：
 
 ### 一个窗口贯穿全流程（不要反复重启浏览器）
 
-`scripts/browser-session.cjs` 的 `attach(profileDir, port)` 先 `connectOverCDP` 连接已在运行的专用 Chrome，只有探测不到调试端口时才启动一次（`--no-sandbox --remote-debugging-port=<port>`，detached）。微博默认端口 `9333`（`CHROME_DEBUG_PORT` 可覆盖），与知乎的 `9444` 分开。每步结束都不关窗口，下一步重新 `attach`。
+`scripts/browser-session.cjs` 的 `attach(profileDir, port)` 先 `connectOverCDP` 连接已在运行的专用 Chrome，只有授权启动并设置 `CHROME_ALLOW_LAUNCH=1` 且探测不到调试端口时才启动一次（`--enable-automation --remote-debugging-address=127.0.0.1 --remote-debugging-port=<port>`，detached）。微博默认端口 `9333`（`CHROME_DEBUG_PORT` 可覆盖），与知乎的 `9444` 分开。每步结束都不关窗口，下一步重新 `attach`。
 
 ### 脚本入口（推荐一次跑完，不要拆成多个 node 进程）
 
@@ -56,7 +56,7 @@ node skills/weibo-weekly-sync/scripts/weibo-run.cjs \
   --manifest <payload>/manifest.json --optimized <payload>/images-opt --publish
 
 # 只编排不发布（--publish 去掉即可），之后单独收尾/发布
-node skills/weibo-weekly-sync/scripts/weibo-finalize.cjs --manifest <payload>/manifest.json
+node skills/weibo-weekly-sync/scripts/weibo-finalize.cjs --manifest <payload>/manifest.json --draft <草稿ID>
 
 # 公开页回读
 node skills/weibo-weekly-sync/scripts/weibo-verify.cjs --url https://weibo.com/ttarticle/p/show?id=...
@@ -67,9 +67,9 @@ node skills/weibo-weekly-sync/scripts/weibo-login.cjs
 
 拆成多个进程时，跨进程 `connectOverCDP` 在本机会出现脚本被 SIGTERM（退出码 137）且无输出的情况；`weibo-run.cjs` 因此把编排、校验、发布、取公开链接串在同一个 `async` 里，窗口只开一次。结束时只 `log({ step: 'browser_left_open' })`，不 `close()`。
 
-### 不要用上游适配器自带的启动器
+### 上游适配器
 
-`XinAloha/skills` 的 `weibo-article.ts` 内容编排可参考，但它通过 `baoyu-chrome-cdp` 启动 Chrome 时**不带 `--no-sandbox`**，在受限环境下 Chrome 直接退出，表现为 `Error: CDP connection closed.`。改用 `scripts/weibo-compose.cjs`（Playwright 直排），只保留“标题/导语/正文/图片”的编排思路。
+只参考经过审查的上游编排逻辑，不自动安装或运行未经固定版本的启动器。原生 Chrome 沙箱必须保留，连接失败不能通过关闭沙箱重试。
 
 ### 编辑器结构与直排做法（v5，tiptap/ProseMirror）
 
@@ -107,3 +107,5 @@ Cookie 丢失时编辑器与首页都会 302 到 `newlogin`。用 `scripts/weibo
 当前上游项目提供微博读取能力，不保证具备发布、编辑或删除微博的工具。因此“同步到微博”若要求写入微博，必须另行提供经授权的微博发布适配器；本 skill 不能把读取工具冒充发布工具。
 
 跨平台任务中，微博只消费 `weekly-cross-platform-sync` 生成的一份 manifest；已成功的其他平台不触发微博重新抓取。发布超时或结果未知时先按来源 ID、目标账号和标题回读，不直接重跑脚本。
+
+安全配置以 [共享浏览器会话规则](../weekly-cross-platform-sync/references/browser-session.md) 为准；显式目标账号、专用 profile 核验和保留沙箱是写入前提。未知提交先回读，不重复提交。

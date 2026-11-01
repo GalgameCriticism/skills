@@ -4,6 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { attach } = require('./browser-session.cjs');
+const { imageFile, checkSubmission, weiboAccount } = require('./safety.cjs');
 
 const args = { publish: false };
 for (let i = 2; i < process.argv.length; i++) {
@@ -17,6 +18,7 @@ const manifest = JSON.parse(fs.readFileSync(args.manifest, 'utf8'));
 const payloadDir = path.dirname(args.manifest);
 const optDir = args.optimized;
 const receiptFile = path.join(payloadDir, 'weibo-receipt.json');
+checkSubmission(receiptFile);
 const account = process.env.WEIBO_ACCOUNT || 'Galgame批评';
 const log = o => console.log(JSON.stringify({ t: new Date().toISOString(), ...(typeof o === 'string' ? { msg: o } : o) }));
 
@@ -45,7 +47,7 @@ for (const b of blocks) {
   if (b.type === 'image') {
     imgIndex++;
     const optimized = optDir ? path.join(optDir, path.basename(b.path).replace(/\.(png|jpg|jpeg)$/i, '.jpg')) : null;
-    const file = optimized && fs.existsSync(optimized) ? optimized : path.join(payloadDir, b.path);
+    const file = optimized && fs.existsSync(optimized) ? imageFile(optDir, path.basename(optimized)) : imageFile(payloadDir, b.path);
     imageFiles.push(file);
     htmlParts.push(`<p>WBIMGPH_${imgIndex}</p>`);
     continue;
@@ -73,7 +75,7 @@ const editorStats = page => page.evaluate(() => {
 (async () => {
   const { ctx, reused, port } = await attach(process.env.WEIBO_PROFILE);
   log({ step: 'browser', reused, port });
-  const page = ctx.pages()[0] || await ctx.newPage();
+  const page = await ctx.newPage();
   try {
     if (!/card\.weibo\.com/.test(page.url())) {
       await page.goto('https://card.weibo.com/article/v3/editor', { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -84,13 +86,7 @@ const editorStats = page => page.evaluate(() => {
     const writeBtn = page.getByText('写文章', { exact: true }).first();
     if (await writeBtn.count()) { await writeBtn.click().catch(() => {}); await page.waitForTimeout(5000); }
 
-    // identity check: the editor shell shows the logged-in nickname
-    const nick = await page.evaluate(() => {
-      const el = [...document.querySelectorAll('*')].find(e => e.children.length === 0 && e.textContent.trim() === 'Galgame批评');
-      return el ? el.textContent.trim() : null;
-    });
-    log({ step: 'identity', nick, url: page.url() });
-    if (nick !== account) throw new Error(`Unexpected weibo account: ${nick}`);
+    await weiboAccount(page);
 
     const editor = page.locator('.ProseMirror').first();
     await editor.waitFor({ timeout: 30000 });
@@ -188,7 +184,7 @@ const editorStats = page => page.evaluate(() => {
     }
     if (!textOk || hosted !== expectedImages || s.placeholders !== 0) throw new Error('Fidelity gate failed; not publishing');
 
-    fs.writeFileSync(receiptFile, JSON.stringify({ ...state, status: 'submitting' }, null, 2));
+    fs.writeFileSync(receiptFile, JSON.stringify({ ...state, status: 'prepared' }, null, 2));
     await page.getByRole('button', { name: '下一步', exact: true }).first().click();
     await page.waitForTimeout(4000);
     log({ step: 'next_step', url: page.url() });
