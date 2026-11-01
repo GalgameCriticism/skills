@@ -3,6 +3,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const { attach } = require('./browser-session.cjs');
+const { imageFile, checkSubmission, claimSubmission, weiboAccount } = require('./safety.cjs');
 
 const args = { publish: false };
 for (let i = 2; i < process.argv.length; i++) {
@@ -16,6 +17,7 @@ const manifest = JSON.parse(fs.readFileSync(args.manifest, 'utf8'));
 const payloadDir = path.dirname(args.manifest);
 const optDir = args.optimized;
 const receiptFile = path.join(payloadDir, 'weibo-receipt.json');
+checkSubmission(receiptFile);
 const account = process.env.WEIBO_ACCOUNT || 'Galgame批评';
 const log = o => console.log(JSON.stringify({ t: new Date().toISOString(), ...(typeof o === 'string' ? { msg: o } : o) }));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -64,7 +66,7 @@ for (const b of blocks) {
   if (b.type === 'image') {
     imgIndex++;
     const optimized = optDir ? path.join(optDir, path.basename(b.path).replace(/\.(png|jpg|jpeg)$/i, '.jpg')) : null;
-    const file = optimized && fs.existsSync(optimized) ? optimized : path.join(payloadDir, b.path);
+    const file = optimized && fs.existsSync(optimized) ? imageFile(optDir, path.basename(optimized)) : imageFile(payloadDir, b.path);
     imageFiles.push(file);
     htmlParts.push(`<p>WBIMGPH_${imgIndex}</p>`);
     continue;
@@ -113,19 +115,14 @@ const tokenRect = (page, n) => page.evaluate(idx => {
 (async () => {
   const { ctx, port, reused } = await attach(process.env.WEIBO_PROFILE, process.env.CHROME_DEBUG_PORT || 9333);
   log({ step: 'browser', reused, port });
-  const page = ctx.pages()[0] || await ctx.newPage();
+  const page = await ctx.newPage();
 
   await page.goto('https://card.weibo.com/article/v3/editor', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await sleep(7000);
   const writeBtn = page.getByText('写文章', { exact: true }).first();
   if (await writeBtn.count()) { await writeBtn.click().catch(() => {}); await sleep(5000); }
 
-  const nick = await page.evaluate(() => {
-    const hit = [...document.querySelectorAll('*')].find(e => e.children.length === 0 && e.textContent.trim() === 'Galgame批评');
-    return hit ? hit.textContent.trim() : null;
-  }).catch(() => null);
-  log({ step: 'identity', nick, url: page.url() });
-  if (nick !== account) throw new Error(`Unexpected weibo account: ${nick}`);
+  await weiboAccount(page);
 
   const editor = page.locator('.ProseMirror').first();
   await editor.waitFor({ timeout: 30000 });
@@ -223,6 +220,8 @@ const tokenRect = (page, n) => page.evaluate(idx => {
   }
   if (!textOk || s.hosted !== expectedImages || s.placeholders !== 0) throw new Error('Fidelity gate failed; not publishing');
 
+  await weiboAccount(page);
+  claimSubmission(receiptFile);
   fs.writeFileSync(receiptFile, JSON.stringify({ ...state, status: 'submitting' }, null, 2));
 
   // 1. 下一步 must be a real locator click. A DOM click on the footer control logs ok:true and does nothing.

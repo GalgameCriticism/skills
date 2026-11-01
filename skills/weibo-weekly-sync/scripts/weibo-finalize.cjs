@@ -2,6 +2,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const { attach } = require('./browser-session.cjs');
+const { checkSubmission, claimSubmission, weiboAccount } = require('./safety.cjs');
 
 const args = { publish: false };
 for (let i = 2; i < process.argv.length; i++) {
@@ -9,8 +10,11 @@ for (let i = 2; i < process.argv.length; i++) {
   if (a === '--publish') args.publish = true;
   else if (a.startsWith('--')) args[a.slice(2)] = process.argv[++i];
 }
+if (!/^\d+$/.test(args.draft || '')) throw new Error('--draft <numeric draft ID> is required');
 const manifest = JSON.parse(fs.readFileSync(args.manifest, 'utf8'));
 const outDir = path.dirname(args.manifest);
+const receiptFile = path.join(outDir, 'weibo-receipt.json');
+checkSubmission(receiptFile);
 const log = o => console.log(JSON.stringify({ t: new Date().toISOString(), ...o }));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -35,15 +39,18 @@ const stats = page => page.evaluate(() => {
 
 (async () => {
   const { ctx } = await attach(process.env.WEIBO_PROFILE, process.env.CHROME_DEBUG_PORT || 9333);
-  const page = ctx.pages()[0] || await ctx.newPage();
+  const page = await ctx.newPage();
   await page.goto(`https://card.weibo.com/article/v5/editor#/draft/${args.draft}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await sleep(10000);
 
   const s = await stats(page);
   const textOk = s.text === expectedText;
   log({ step: 'fidelity', title: s.title, figures: s.figures, hosted: s.hosted, placeholders: s.placeholders, expectedImages, chars: s.text.length, expectedChars: expectedText.length, textOk });
-  if (!args.publish) { await ctx.browser().close(); return; }
+  if (!args.publish) return;
   if (!textOk || s.placeholders !== 0 || s.hosted !== expectedImages || s.figures !== expectedImages) throw new Error('Fidelity gate failed; not publishing');
+
+  await weiboAccount(page);
+  claimSubmission(receiptFile);
 
   // The publish panel is a modal (visible either after 下一步 or restored from the previous session).
   let modal = page.locator('.n-modal, [role="dialog"]').filter({ hasText: '发布' }).first();
@@ -86,5 +93,5 @@ const stats = page => page.evaluate(() => {
     status: /ttarticle\/p\/show/.test(page.url()) ? 'published' : 'unknown',
     url: page.url(), at: new Date().toISOString(),
   }, null, 2));
-  await ctx.browser().close();
+  log({ step: 'browser_left_open' });
 })().catch(e => { console.error('ERR', e && e.message); process.exit(1); });

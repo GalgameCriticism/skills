@@ -27,6 +27,7 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 WIKI_NODE_TOKEN = "LEfXw6TgTig84ok9XSLcwXsYnnf"
@@ -73,9 +74,10 @@ def fetch_staff(base_token: str, issue: int) -> dict:
 
     ndjson 模式 stdout 是 manifest（无 ok 字段，记录写入 manifest.record_file），
     与 json 模式的响应结构不同，故单独走 subprocess。
-    lark-cli --output 仅允许 cwd、/tmp、~/files，故固定写 /tmp/bw_staff.ndjson。
+    lark-cli --output 仅允许 cwd、/tmp、~/files，使用 /tmp 内本次独立目录。
     """
-    tmp = "/tmp/bw_staff.ndjson"
+    temporary = tempfile.TemporaryDirectory(prefix="bw-staff-", dir="/tmp")
+    tmp = str(Path(temporary.name) / "staff.ndjson")
     cmd = [
         "lark-cli", "base", "+record-list",
         "--base-token", base_token,
@@ -90,12 +92,14 @@ def fetch_staff(base_token: str, issue: int) -> dict:
         manifest = json.loads(r.stdout)
     except json.JSONDecodeError:
         raise SystemExit(f"[staff] record-list 失败: {r.stdout[:200]} {r.stderr[:200]}")
-    record_file = manifest.get("record_file", "/private/tmp/bw_staff.ndjson")
+    record_file = str(Path(manifest.get("record_file", tmp)).resolve())
+    if Path(record_file) != Path(tmp).resolve():
+        temporary.cleanup()
+        raise SystemExit("[staff] record_file 不属于本次临时目录")
     try:
         recs = [json.loads(l) for l in open(record_file, encoding="utf-8") if l.strip()]
     finally:
-        Path(record_file).unlink(missing_ok=True)
-        Path(record_file + ".manifest.json").unlink(missing_ok=True)
+        temporary.cleanup()
     hit = [r for r in recs if r.get("周报期数") == issue]
     if not hit:
         got = sorted({r.get("周报期数") for r in recs if isinstance(r.get("周报期数"), int)})
@@ -130,7 +134,7 @@ def apply_to_article(issue_dir: Path, credits: list[str]) -> None:
     data["credits"] = credits
     article_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[staff] 已写回 {article_path}")
-    print("[staff] 提醒: 重跑 render_preview.py 刷新预览；上线前若已存过草稿需 --replace 重建")
+    print("[staff] 提醒: 重跑 render_preview.py 刷新预览；已有草稿时先人工核对，不自动删除重建")
 
 
 def main() -> None:

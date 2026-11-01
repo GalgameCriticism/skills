@@ -14,11 +14,10 @@
   3. POST draft/add，回执写 _preview/draft_receipt.json
   4. 人工到 创作中心→专栏投稿→草稿箱 打开审核，点「发布」
 
-重复保护：已有回执时默认停止（避免覆盖人工改过的草稿）；--replace 先删旧草稿再建新的。
-删除端点（实证）：POST x/dynamic/feed/article/draft/delete?csrf=  body {"article_id": id}
+重复保护：已有回执时默认停止（避免覆盖人工改过的草稿）；不自动删除或覆盖已有草稿。
 
 用法:
-    python3 save_draft.py <期目录> [--dry-run] [--replace]
+    python3 save_draft.py <期目录> [--dry-run]
 """
 from __future__ import annotations
 
@@ -26,36 +25,14 @@ import argparse
 import json
 import time
 from pathlib import Path
+from safety import preview_directory
 
-CRED_ENV = Path.home() / ".config" / "bilibili-weekly-article" / "config.env"
+from build_opus import load_credential
+from safety import selected_images, require_review, require_account, claim_receipt, write_receipt, post_draft
+
 DRAFT_ADD_URL = "https://api.bilibili.com/x/dynamic/feed/article/draft/add"
-DRAFT_DEL_URL = "https://api.bilibili.com/x/dynamic/feed/article/draft/delete"
 DRAFT_LIST_URL = "https://api.bilibili.com/x/article/creative/draft/list"
 EDITOR_VERSION = "eva3-4.0.0"
-
-
-def load_credential(path: str | None):
-    """返回 (Credential|None, values)。"""
-    from bilibili_api import Credential
-
-    env_file = Path(path) if path else CRED_ENV
-    values: dict[str, str] = {}
-    if env_file.is_file():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            values[k.strip()] = v.strip().strip('"').strip("'")
-    if not values.get("SESSDATA") or not values.get("BILI_JCT"):
-        return None, values
-    cred = Credential(
-        sessdata=values["SESSDATA"],
-        bili_jct=values["BILI_JCT"],
-        buvid3=values.get("BUVID3", ""),
-        dedeuserid=values.get("DEDE_USER_ID", ""),
-    )
-    return cred, values
 
 
 # ---------------------------------------------------------------- 编辑器格式段落
@@ -184,48 +161,29 @@ def verify_draft(sess: requests.Session, article_id: int) -> dict | None:
 
 
 def main() -> None:
-    import asyncio
-
     ap = argparse.ArgumentParser(description="保存 B 站图文草稿（人工审核后手动发布）")
     ap.add_argument("issue_dir", help="期目录")
     ap.add_argument("--article", help="article.json（默认 <期目录>/_preview/article.json）")
     ap.add_argument("--credential", help="凭证 env 文件")
     ap.add_argument("--dry-run", action="store_true", help="只构建 arg 不提交")
-    ap.add_argument("--replace", action="store_true", help="删除已有回执对应的旧草稿后重建")
+    ap.add_argument("--account-id", help="目标 B 站 UID（存草稿必填）")
     args = ap.parse_args()
 
     # 复用共享上传模块
     issue_dir = Path(args.issue_dir).expanduser().resolve()
-    preview = issue_dir / "_preview"
+    preview = preview_directory(issue_dir)
     article_path = Path(args.article) if args.article else preview / "article.json"
     receipt_path = preview / "draft_receipt.json"
     data = json.loads(article_path.read_text(encoding="utf-8"))
 
-    # 重复保护
-    if receipt_path.is_file() and not args.replace and not args.dry_run:
-        old = json.loads(receipt_path.read_text(encoding="utf-8"))
-        raise SystemExit(
-            f"[draft] 已存在草稿回执 article_id={old.get('article_id')}"
-            f"（可能已在网页端人工改过，不覆盖）。\n"
-            f"  确认要废弃旧草稿重建: 加 --replace\n"
-            f"  或直接到 创作中心→专栏投稿→草稿箱 打开 article_id={old.get('article_id')} 审核发布"
-        )
-
-    wanted: list[Path] = []
-    cover = data.get("source", {}).get("cover")
-    if cover:
-        wanted.append(issue_dir / cover)
-    for sec in data.get("sections", []):
-        for item in sec.get("items", []):
-            for i in item.get("selected", []):
-                wanted.append(issue_dir / item["candidates"][i])
-    missing = [p for p in wanted if not p.is_file()]
-    if missing:
-        raise SystemExit("[draft] 素材缺失:\n  " + "\n  ".join(str(m) for m in missing))
-
-    cred, values = load_credential(args.credential)
-    if cred is None and not args.dry_run:
-        raise SystemExit("[draft] 未找到登录凭证。先运行:\n  python3 scripts/login_qr.py")
+    if receipt_path.exists() and not args.dry_run:
+        raise SystemExit("[draft] 已有草稿或未知提交回执，请先到草稿箱核对；不自动覆盖或重建")
+    wanted = selected_images(issue_dir, data)
+    cred, values = (None, {}) if args.dry_run else load_credential(args.credential)
+    if not args.dry_run:
+        require_review(data)
+        if cred is None:
+            raise SystemExit("[draft] 未找到登录凭证，请先运行 login_qr.py")
 
     if args.dry_run:
         imgs = {
@@ -238,6 +196,7 @@ def main() -> None:
         print(f"[draft] dry-run：{len(imgs)} 张占位图，未登录未上传")
     else:
         sess = api_session(cred)
+        require_account(sess, args.account_id)
         imgs = upload_images(sess, cred, wanted)
 
     paragraphs = build_paragraphs(data, issue_dir, imgs)
@@ -253,20 +212,20 @@ def main() -> None:
         print(f"[draft] dry-run 完成，arg 已写出 {out}")
         return
 
-    # --replace：先删旧草稿
-    if args.replace and receipt_path.is_file():
-        old = json.loads(receipt_path.read_text(encoding="utf-8"))
-        old_id = old.get("article_id")
-        if old_id:
-            r = sess.post(DRAFT_DEL_URL, params={"csrf": cred.bili_jct}, json={"article_id": old_id}, timeout=15)
-            print(f"[draft] 删除旧草稿 {old_id}: code={r.json().get('code')}")
-
-    r = sess.post(DRAFT_ADD_URL, params={"csrf": cred.bili_jct}, json={"arg": arg}, timeout=30)
-    resp = r.json()
+    # Claim before any draft write. Keep unknown submissions for manual recovery.
+    require_account(sess, args.account_id)
+    claim_receipt(receipt_path, {"status": "submitting", "account_id": args.account_id,
+                                 "title": arg["title"]})
+    resp = post_draft(sess, DRAFT_ADD_URL, params={"csrf": cred.bili_jct}, json={"arg": arg}, timeout=30)
     if resp.get("code") != 0:
-        raise SystemExit(f"[draft] 保存失败: {json.dumps(resp, ensure_ascii=False)[:300]}")
+        raise SystemExit(f"[draft] 保存未确认 (code={resp.get('code')})，保留回执，请先检查草稿箱")
     article_id = (resp.get("data") or {}).get("article_id")
+    if not str(article_id or "").isdigit():
+        raise SystemExit("[draft] 未取得草稿 ID，保留未知回执，请先检查草稿箱")
     print(f"[draft] 已保存草稿 article_id={article_id}")
+
+    write_receipt(receipt_path, {"status": "submitted", "account_id": args.account_id,
+                                 "article_id": article_id, "title": arg["title"]})
 
     # 回读验证
     draft = verify_draft(sess, article_id)
@@ -276,6 +235,8 @@ def main() -> None:
         print("[draft] 警告: 草稿列表暂未回读到（可能延迟），请到草稿箱确认")
 
     receipt = {
+        "status": "saved",
+        "account_id": args.account_id,
         "article_id": article_id,
         "title": arg["title"],
         "paragraphs": len(paragraphs),
@@ -284,7 +245,7 @@ def main() -> None:
         "edit_url": "https://member.bilibili.com/platform/upload/text",
         "verified": draft is not None,
     }
-    receipt_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_receipt(receipt_path, receipt)
     print(f"[draft] 回执已写 {receipt_path}")
     print("[draft] 下一步（人工）: 创作中心→专栏投稿→草稿箱 → 打开该草稿审核 → 点「发布」")
 

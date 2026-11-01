@@ -13,6 +13,7 @@ import html
 import json
 import os
 from pathlib import Path
+from safety import preview_directory
 
 CSS = """
 :root { color-scheme: light; }
@@ -135,8 +136,9 @@ def main() -> None:
     args = ap.parse_args()
 
     issue_dir = Path(args.issue_dir).expanduser().resolve()
-    article_path = Path(args.article) if args.article else issue_dir / "_preview" / "article.json"
-    out = Path(args.out) if args.out else issue_dir / "_preview" / "preview.html"
+    preview = preview_directory(issue_dir)
+    article_path = Path(args.article) if args.article else preview / "article.json"
+    out = Path(args.out) if args.out else preview / "preview.html"
     data = json.loads(article_path.read_text(encoding="utf-8"))
 
     out.parent.mkdir(parents=True, exist_ok=True)

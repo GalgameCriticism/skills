@@ -16,5 +16,5 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   }));
   console.log(JSON.stringify(st));
   await page.screenshot({ path: path.join(__dirname, '..', 'gal265', 'weibo-public.png'), fullPage: false });
-  await ctx.browser().close();
+  // Leave the dedicated browser running for follow-up verification.
 })().catch(e => { console.error('ERR', e && e.message); process.exit(1); });

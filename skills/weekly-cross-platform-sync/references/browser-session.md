@@ -15,11 +15,19 @@
 
 跨平台任务常被拆成“准备 → 校验 → 发布 → 回读”多步，每一步都 `launchPersistentContext` 再 `close` 会造成用户侧浏览器不停开合，并且每次重启都可能丢草稿、触发风控、甚至把登录态置入风险。
 
-- 用 `scripts/browser-session.cjs` 的 `attach(profileDir, port)`：先 `connectOverCDP` 复用已在运行的专用 Chrome；探测不到调试端口才启动一次，并保持窗口不关。
+- 用 `scripts/browser-session.cjs` 的 `attach(profileDir, port)`：先 `connectOverCDP` 复用已在运行的专用 Chrome；探测不到调试端口时，只有任务已授权启动且显式设置 `CHROME_ALLOW_LAUNCH=1` 才启动，并保持窗口不关。
 - 每步结束只断开连接、**不关闭浏览器**；下一步重新 `attach`。脚本失败或超时后同样先 `attach` 复查，不重开新窗口。
 - 平台端口分开（知乎 `9444`、微博 `9333`），一个平台一个 profile，互不抢占。
 - 删除 `Singleton*` 锁文件是禁止操作：实测会直接清掉该 profile 的已登录 Cookie，只能让用户重新扫码。
-- 受限环境下 Chrome 必须带 `--no-sandbox` 启动；上游 CLI 自带的启动器若不带该参数，会表现为 `CDP connection closed`，此时改用本仓库的 `attach` 启动，而不是反复重试。
+- Chrome 必须保留沙箱保护；无法启动时报告环境限制，不通过 `--no-sandbox` 降级。
 
 
 调用任何上游 CLI 前检查其启动/连接/退出行为。如果它会重置 profile、切换配置或关闭已连接浏览器，改用安全连接工具完成同样的编辑流程；缺少安全能力时明确报告，不能把“无人值守”当作绕过登录或验证码的理由。
+
+## 脚本强制检查
+
+每个平台必须指定已存在的专用目录（`WEIBO_PROFILE` / `ZHIHU_PROFILE`）。连接时读取 Chrome 的进程参数，确认 `--user-data-dir` 与该目录的真实路径一致；拒绝日常目录、其符号链接和关闭沙箱的会话。专用 Chrome 必须以 `--enable-automation` 启动才能核验参数，旧会话无法证明身份时停止，不自动关闭它。
+
+允许启动时另外设置 `CHROME_PATH` 为真实可执行文件的绝对路径和 `CHROME_ALLOW_LAUNCH=1`。启动只监听 `127.0.0.1`，保留 Chrome 沙箱；锁文件存在时停止，不删除。不要把 CDP 端口暴露到网络。微博写入须设置 `WEIBO_ACCOUNT` 为目标昵称；知乎写入须设置 `ZHIHU_ACCOUNT_ID` 为官方 `/api/v4/me` 返回的账号 ID。账号控制无法识别时停止，不根据正文中的同名文字判断身份。
+
+各次提交在素材目录保存 `.attempt.json`，未知提交和已有发布回执会阻止再次写入；先回读/人工核对，不删除标记后直接重跑。仅 `prepared` 状态允许进入独立发布步骤。素材中的图片路径及优化图必须在各自目录内，不接受越界路径或非图片文件。上述保护不代替任务对来源、账号和发布目标的授权。

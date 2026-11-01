@@ -11,10 +11,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import os
-import stat
 import sys
 from pathlib import Path
+from safety import write_private
 
 DEFAULT_ENV = Path.home() / ".config" / "bilibili-weekly-article" / "config.env"
 
@@ -82,15 +81,13 @@ async def main_async() -> None:
     cred = qr.get_credential()
     out = Path(args.credential)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(
+    write_private(out,
         "# bilibili-weekly-article 凭证（chmod 600，勿入仓库）\n"
         f"SESSDATA={cred.sessdata}\n"
         f"BILI_JCT={cred.bili_jct}\n"
         f"BUVID3={cred.buvid3}\n"
         f"DEDE_USER_ID={cred.dedeuserid}\n",
-        encoding="utf-8",
     )
-    os.chmod(out, stat.S_IRUSR | stat.S_IWUSR)
     log(f"[login] DONE 凭证已写入 {out} (uid={cred.dedeuserid})")
     print(f"LOGIN_DONE uid={cred.dedeuserid}", flush=True)
 

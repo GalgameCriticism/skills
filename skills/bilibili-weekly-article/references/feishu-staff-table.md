@@ -39,7 +39,7 @@ python3 scripts/fetch_staff.py 264 --apply "264期"    # 写回 _preview/article
 ```
 
 `--apply` 幂等：值一致时不改文件；写回后需重跑 `render_preview.py` 刷新预览，
-若已存过草稿要 `save_draft.py --replace` 重建。
+若已存过草稿，先人工核对已有草稿；不要自动删除重建。
 
 ## 授权（lark-cli user 身份）
 

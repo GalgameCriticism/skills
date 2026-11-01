@@ -24,6 +24,7 @@ import unicodedata
 import zipfile
 from difflib import SequenceMatcher
 from pathlib import Path
+from safety import preview_directory
 from xml.etree import ElementTree as ET
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -320,12 +321,13 @@ def main() -> None:
     args = ap.parse_args()
 
     issue_dir = Path(args.issue_dir).expanduser().resolve()
+    preview = preview_directory(issue_dir)
     if not issue_dir.is_dir():
         raise SystemExit(f"[parse] 目录不存在: {issue_dir}")
 
     data = parse(issue_dir, args.readlist)
 
-    out = Path(args.output) if args.output else issue_dir / "_preview" / "article.json"
+    out = Path(args.output) if args.output else preview / "article.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 

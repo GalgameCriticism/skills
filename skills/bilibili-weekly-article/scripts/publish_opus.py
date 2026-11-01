@@ -20,9 +20,13 @@ import json
 import sys
 import time
 from pathlib import Path
+from safety import preview_directory
 
 sys.path.insert(0, str(Path(__file__).parent))
-from build_opus import CRED_ENV, load_credential  # noqa: E402
+from build_opus import load_credential
+from upload_bfs import api_session
+from safety import (selected_images, require_review, require_account, validate_payload,
+                    claim_receipt, write_receipt, digest)
 
 CREATE_OPUS_URL = "https://api.bilibili.com/x/dynamic/feed/create/opus"
 OPUS_DETAIL_URL = "https://api.bilibili.com/x/polymer/web-dynamic/v1/opus/detail"
@@ -67,31 +71,53 @@ async def main_async() -> None:
     ap.add_argument("--credential", help="凭证 env 文件")
     ap.add_argument("--collection", default=None, help="文集 ID（实验性，如 471774）")
     ap.add_argument("--no-wbi", action="store_true", help="不附加 wbi 签名（接口变更时的回退）")
+    ap.add_argument("--account-id", help="目标 B 站 UID（发布必填）")
     ap.add_argument("--yes", action="store_true", help="跳过交互确认直接发布")
     ap.add_argument("--dry-run", action="store_true", help="只校验 payload 与凭证，不发布")
     args = ap.parse_args()
 
     issue_dir = Path(args.issue_dir).expanduser().resolve()
-    article_path = Path(args.article) if args.article else issue_dir / "_preview" / "article.json"
-    payload_path = Path(args.payload) if args.payload else issue_dir / "_preview" / "opus_payload.json"
+    preview = preview_directory(issue_dir)
+    article_path = Path(args.article) if args.article else preview / "article.json"
+    payload_path = Path(args.payload) if args.payload else preview / "opus_payload.json"
     article = json.loads(article_path.read_text(encoding="utf-8"))
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
 
     # 1. payload 校验
-    if "__DRY_RUN_IMG_" in json.dumps(payload):
+    if not args.dry_run and "__DRY_RUN_IMG_" in json.dumps(payload):
         raise SystemExit("[publish] payload 含 dry-run 占位图，请先真实运行 build_opus.py")
     title = payload["opus_req"]["opus"]["title"]
     n_pics = count_pics(payload)
     print(f"[publish] 期号={article.get('issue')} 标题={title}")
     print(f"[publish] 图片段={n_pics} upload_id={payload['opus_req']['upload_id']}")
 
-    # 2. 凭证
+    require_review(article)
+    paths = selected_images(issue_dir, article)
+    if args.dry_run:
+        # Offline validation also works without credentials or bilibili-api installed.
+        validate_payload(payload, article, payload.get("_local", {}).get("account_id"), paths)
+        print("[publish] dry-run 完成：素材与定稿一致，未登录、未上传、未发布")
+        return
+    validate_payload(payload, article, args.account_id, paths)
     cred, _ = load_credential(args.credential)
     if cred is None:
-        raise SystemExit("[publish] 缺少凭证，请先运行 scripts/login.py 扫码登录")
-
-    if args.dry_run:
-        print("[publish] dry-run 完成：payload 与凭证就绪，未发布")
+        raise SystemExit("[publish] 缺少凭证，请先运行 scripts/login_qr.py")
+    require_account(api_session(cred), args.account_id)
+    receipt_path = preview / "publish_receipt.json"
+    identity = {"issue": article.get("issue"), "account_id": str(args.account_id),
+                "payload_sha256": digest(payload), "collection_requested": args.collection}
+    if receipt_path.exists():
+        previous = json.loads(receipt_path.read_text(encoding="utf-8"))
+        if any(previous.get(key) != value for key, value in identity.items()):
+            raise SystemExit("[publish] 已有其他素材或账号的回执，请先人工核对，不重复提交")
+        dyn_id = str(previous.get("dyn_id") or "")
+        if not dyn_id.isdigit():
+            raise SystemExit("[publish] 上次提交结果未知，请先检查创作中心，不得盲目重试")
+        verify = await verify_opus(dyn_id, title, n_pics)
+        write_receipt(receipt_path, dict(previous, verify=verify))
+        print(f"[publish] 已有投稿，仅回读： https://www.bilibili.com/opus/{dyn_id}")
+        if not (verify["title_match"] and verify["pics_match"]):
+            raise SystemExit("[publish] 回读不一致，请人工核对；未重复发布")
         return
 
     # 3. 人工确认
@@ -103,7 +129,8 @@ async def main_async() -> None:
     # 4. 发布
     from bilibili_api.utils.network import Api
 
-    opus = payload["opus_req"]["opus"]
+    request_payload = {key: value for key, value in payload.items() if key != "_local"}
+    opus = request_payload["opus_req"]["opus"]
     if args.collection:
         opus["collection_id"] = int(args.collection)
         print(f"[publish] 实验性参数: collection_id={args.collection}")
@@ -117,11 +144,13 @@ async def main_async() -> None:
         credential=cred,
     )
     upload_id = payload["opus_req"]["upload_id"]
+    receipt = dict(identity, status="submitting", title=title, pics=n_pics)
+    claim_receipt(receipt_path, receipt)
     print("[publish] 提交 create/opus …", flush=True)
     t0 = time.time()
     try:
         result = await (
-            api.update_data(**payload)
+            api.update_data(**request_payload)
             .update_params(
                 csrf=cred.bili_jct,
                 gaia_source="main_web",
@@ -129,19 +158,23 @@ async def main_async() -> None:
             )
             .result
         )
-    except Exception as e:  # noqa: BLE001
-        raise SystemExit(f"[publish] 发布失败: {e}\n若报签名/参数错误，可尝试 --no-wbi 或检查凭证是否过期")
-    print(f"[publish] 响应: {json.dumps(result, ensure_ascii=False)[:300]} ({time.time()-t0:.1f}s)")
+    except Exception:
+        raise SystemExit("[publish] 提交未确认，已保留回执；请先检查创作中心，不直接重试")
+    print(f"[publish] 接口已响应 ({time.time()-t0:.1f}s)")
 
     dyn_id = str(result.get("dyn_id_str") or result.get("dyn_id") or "")
-    if not dyn_id:
-        raise SystemExit(f"[publish] 响应缺少 dyn_id，无法回读验证: {result}")
+    if not dyn_id.isdigit():
+        raise SystemExit("[publish] 响应缺少有效 dyn_id，保留未知回执，请先检查创作中心")
+    receipt.update(status="submitted", dyn_id=dyn_id, url=f"https://www.bilibili.com/opus/{dyn_id}")
+    write_receipt(receipt_path, receipt)
 
     # 5. 回读验证
     await asyncio.sleep(3)
     verify = await verify_opus(dyn_id, title, n_pics)
     url = f"https://www.bilibili.com/opus/{dyn_id}"
     receipt = {
+        **identity,
+        "status": "published" if verify["title_match"] and verify["pics_match"] else "submitted",
         "schema": "bilibili-weekly-article/receipt/1.0",
         "issue": article.get("issue"),
         "title": title,
@@ -154,8 +187,7 @@ async def main_async() -> None:
         "verify": verify,
         "published_at": time.strftime("%Y-%m-%d %H:%M:%S %z"),
     }
-    receipt_path = issue_dir / "_preview" / "publish_receipt.json"
-    receipt_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_receipt(receipt_path, receipt)
 
     print()
     if verify["title_match"] and verify["pics_match"]:

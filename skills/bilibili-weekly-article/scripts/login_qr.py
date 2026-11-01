@@ -14,11 +14,11 @@
 from __future__ import annotations
 
 import argparse
-import os
-import stat
 import sys
 import time
+from urllib.parse import urlsplit
 from pathlib import Path
+from safety import write_private
 
 import requests
 
@@ -139,10 +139,14 @@ def main() -> None:
         # 新版：回调 url 只是落地页，cookie 在访问它的 Set-Cookie 响应头里
         cb = data.get("url", "")
         if cb:
+            parsed = urlsplit(cb)
+            if (parsed.scheme != "https" or not (parsed.hostname or "").endswith(".bilibili.com")
+                    or parsed.username or parsed.password or parsed.port not in (None, 443)):
+                raise SystemExit("[login] 回调地址不属于 B 站 HTTPS 域名")
             try:
-                sess.get(cb, timeout=15, allow_redirects=True)
-            except requests.RequestException as e:
-                log(f"回调页访问异常（继续用已有 cookie）: {e}", args.log)
+                sess.get(cb, timeout=15, allow_redirects=False)
+            except requests.RequestException:
+                log("回调页访问异常（继续用已有 cookie）", args.log)
         cookies = {k: v for k, v in sess.cookies.get_dict().items() if k in WANT}
         src = "set-cookie"
     log(f"cookie 来源: {src}，字段: {sorted(k for k in cookies if cookies[k])}", args.log)
@@ -163,15 +167,13 @@ def main() -> None:
     out = Path(args.credential)
     out.parent.mkdir(parents=True, exist_ok=True)
     uid = str(info.get("uid") or cookies.get("DedeUserID", ""))
-    out.write_text(
+    write_private(out,
         "# bilibili-weekly-article 凭证（chmod 600，勿入仓库）\n"
         f"SESSDATA={cookies['SESSDATA']}\n"
         f"BILI_JCT={cookies['bili_jct']}\n"
         f"BUVID3={cookies.get('buvid3', '')}\n"
         f"DEDE_USER_ID={uid}\n",
-        encoding="utf-8",
     )
-    os.chmod(out, stat.S_IRUSR | stat.S_IWUSR)
     log(f"DONE 凭证已写入 {out}（uid={uid}, uname={info.get('uname')}）", args.log)
 
 
